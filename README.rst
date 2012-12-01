@@ -7,3 +7,12 @@ Python, along with the `extraction <https://github.com/lethain/extraction>`_ mod
 to create a database of crawled HTML pages and the extracted data.
 
 
+Installation
+============
+
+    git clone ???
+    cd rethinkdb-extraction
+    virtualenv .
+    . ./bin/activate
+    pip install -r requirements.txt
+    python setup.py develop
