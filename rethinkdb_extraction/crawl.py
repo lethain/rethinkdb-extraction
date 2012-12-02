@@ -23,11 +23,12 @@ class RSSLinkExtractor(object):
     def links(self, url):
         "Extract links from an RSS feed at a given URL."
         feed = feedparser.parse(url)
-        print feed
-        print dir(feed)
+        return [x.link for x in feed.entries]
+
 
 class Crawler(object):
     "Crawlers pass data retrieved by requests to extraction and stoer it in RethinkDB."
+    log_content_len = 50
     db = "crawl"
     tables = ['pages', 'html']
 
@@ -39,9 +40,57 @@ class Crawler(object):
         self.extractor = Extractor()
         self.log = logging.getLogger(self.__class__.__name__)
 
-    def crawl(self, url):
-        # print r.table('tv_shows').insert({ 'name': 'Star Trek TNG' }).run()
+
+
+    def retrieve(self, url, force_crawl=False):
+        """
+        Retrieve a URL's contents from RethinkDB if possible,
+        or crawl the source URL directly if not.
+
+        Specify force_crawl as True to bypass the RethinkDB
+        cache entirely.
+        """
+        contents = None
+        if not force_crawl:
+            found = False
+            if found:
+                self.log.info("%s:Crawler.retrieve found contents in RethinkDB.", url)
+            else:
+                self.log.info("%s:Crawler.retrieve contents missing from RethinkDB.", url)
+
+        if not contents:
+            self.log.info("%s:Crawler.retrieve crawling URL", url)
+            contents = requests.get(url).text
+
+        self.log.info("%s:Crawler.retrieve contents '%s'.", url, contents[:self.log_content_len])
+        return contents
+
+    def extract(self, url, contents):
+        "Extract data from a crawl."
+        metadata = self.extractor.extract(contents, source_url=url)
+        self.log.info("%s:Crawler.extract metadata '%s'.", url, metadata.title)
+        return metadata
+
+    def store(self, url, metadata, contents):
+        "Store retrieved data into RethinkDB."
+        self.log.info("%s:Crawler.store storing %s and '%s'.", url, metadata.title, contents[:self.log_content_len])
         pass
+
+    def crawl(self, url, contents=None):
+        """
+        Retrieve a URL, save it's body into RethinkDB,
+        extract its metadata, save that into RethinKDB
+        as well.
+        """
+        self.log.error("%s:Crawler.crawl starting crawl", url)
+        self.log.info("%s:Crawler.crawl starting crawl", url)
+        contents = contents or self.retrieve(url)
+        metadata = self.extract(url, contents)
+        self.store(url, metadata, contents)
+        if metadata and contents:        
+            self.log.info("%s:Crawler.crawl ending crawl, appears successful.", url)
+        else:
+            self.log.warning("%s:Crawler.crawl ending crawl, appears to have failed.", url)
 
     def ensure_db_and_tables(self):
         "Create database and tables if they don't exist."
@@ -65,11 +114,29 @@ class Crawler(object):
         return self._client
 
 
-feed_url = "http://lethain.com/feeds/"
-links = RSSLinkExtractor().links(feed_url)
+def main():
+    "Extract some links and such."
+    feed_url = "http://lethain.com/feeds/"
+    link_extractor = RSSLinkExtractor()
+    crawler = Crawler()
 
-print links
+    # setup loggers to capture output
+    log = logging.getLogger(Crawler.__class__.__name__)
+    log.setLevel(logging.DEBUG)
+    ch = logging.StreamHandler()
+    ch.setLevel(logging.DEBUG)
+    log.addHandler(ch)
 
-c = Crawler()
-c.ensure_db_and_tables()
+    # crawl the data, load it into rethinkdb
+    crawler.ensure_db_and_tables()
+    links = link_extractor.links(feed_url)
+    for link in links[:2]:
+        crawler.crawl(link)
+
+    # retrieve the crawled data from rethinkdb
+    pass
+
+
+if __name__ == "__main__":
+    main()
 
