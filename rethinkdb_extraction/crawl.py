@@ -115,6 +115,9 @@ class Crawler(object):
         else:
             self.log.warning("%s:Crawler.crawl ending crawl, appears to have failed.", url)
 
+    def pages(self):
+        return self.client.db(self.db).table(self.page_table).run()
+
     def ensure_db_and_tables(self):
         "Create database and tables if they don't exist."
         try:
@@ -152,13 +155,13 @@ def main():
     log.addHandler(ch)
 
     # crawl the data, load it into rethinkdb
-    crawler.ensure_db_and_tables()
     links = link_extractor.links(feed_url)
     for link in links:
         crawler.crawl(link)
 
-    # retrieve the crawled data from rethinkdb
-    pass
+    # iterate through all the crawled pages
+    for page in crawler.pages():
+        print page
 
 
 if __name__ == "__main__":
