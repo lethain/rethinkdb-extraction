@@ -30,17 +30,18 @@ class Crawler(object):
     "Crawlers pass data retrieved by requests to extraction and stoer it in RethinkDB."
     log_content_len = 50
     db = "crawl"
-    tables = ['pages', 'html']
+    page_table = "pages"
+    html_table = "html"
+    tables = [page_table, html_table]
 
-    def __init__(self, client=None, host='localhost', port=28015):
+    def __init__(self, client=None, host='localhost', port=28015, overwrite=False):
         "Initialize a Crawler."
         self._client = client
         self.host = host
         self.port = port
+        self.overwrite = overwrite
         self.extractor = Extractor()
         self.log = logging.getLogger(self.__class__.__name__)
-
-
 
     def retrieve(self, url, force_crawl=False):
         """
@@ -52,11 +53,13 @@ class Crawler(object):
         """
         contents = None
         if not force_crawl:
-            found = False
-            if found:
-                self.log.info("%s:Crawler.retrieve found contents in RethinkDB.", url)
-            else:
-                self.log.info("%s:Crawler.retrieve contents missing from RethinkDB.", url)
+            try:
+                found = self.client.db(self.db).table(self.html_table).get(url).run()
+                if found and 'contents' in found:
+                    self.log.info("%s:Crawler.retrieve found contents in RethinkDB.", url)
+                    contents = found['contents']
+            except ExecutionError, ee:
+                self.log.info("%s:Crawler.retrieve contents missing from RethinkDB: %s", url, ee)
 
         if not contents:
             self.log.info("%s:Crawler.retrieve crawling URL", url)
@@ -74,7 +77,27 @@ class Crawler(object):
     def store(self, url, metadata, contents):
         "Store retrieved data into RethinkDB."
         self.log.info("%s:Crawler.store storing %s and '%s'.", url, metadata.title, contents[:self.log_content_len])
-        pass
+        success = self.client.db(self.db).table(self.html_table).insert({'id':url, 'contents':contents}, self.overwrite).run()
+        # the code will error here on the second successful run because it will detect that
+        # it's attempting to create a duplicate primary key, to change this behavior, instantiate
+        # the crawler with overwrite=True:
+        #
+        #    crawler = Crawler(overwrite=True)
+        #
+        # which will allow it to overwrite
+        
+        if 'first_error' in success :
+            raise Exception("%s:Crawler.store had %s errors storing data, first error was: %s" % (url, success['errors'], success['first_error']))
+
+        success = self.client.db(self.db).table(self.page_table).insert({'id': url, 'metadata': {
+                    'urls': metadata.urls,
+                    'titles': metadata.titles,
+                    'images': metadata.images,
+                    'descriptions': metadata.descriptions,
+                    }}, self.overwrite).run()
+
+        if 'first_error' in success :
+            raise Exception("%s:Crawler.store had %s errors storing data, first error was: %s" % (url, success['errors'], success['first_error']))
 
     def crawl(self, url, contents=None):
         """
@@ -118,10 +141,11 @@ def main():
     "Extract some links and such."
     feed_url = "http://lethain.com/feeds/"
     link_extractor = RSSLinkExtractor()
-    crawler = Crawler()
+    crawler = Crawler(overwrite=False)
+    crawler = Crawler(overwrite=True)
 
     # setup loggers to capture output
-    log = logging.getLogger(Crawler.__class__.__name__)
+    log = logging.getLogger('Crawler')
     log.setLevel(logging.DEBUG)
     ch = logging.StreamHandler()
     ch.setLevel(logging.DEBUG)
@@ -130,7 +154,7 @@ def main():
     # crawl the data, load it into rethinkdb
     crawler.ensure_db_and_tables()
     links = link_extractor.links(feed_url)
-    for link in links[:2]:
+    for link in links:
         crawler.crawl(link)
 
     # retrieve the crawled data from rethinkdb
